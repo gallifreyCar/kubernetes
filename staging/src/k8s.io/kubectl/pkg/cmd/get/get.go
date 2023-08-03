@@ -456,6 +456,22 @@ func (o *GetOptions) transformRequests(req *rest.Request) {
 		req.Param("includeObject", "Object")
 	}
 }
+func (o *GetOptions) TransformRequests(req *rest.Request) {
+	if !o.ServerPrint || !o.IsHumanReadablePrinter {
+		return
+	}
+
+	req.SetHeader("Accept", strings.Join([]string{
+		fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName),
+		fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1beta1.SchemeGroupVersion.Version, metav1beta1.GroupName),
+		"application/json",
+	}, ","))
+
+	// if sorting, ensure we receive the full object in order to introspect its fields via jsonpath
+	if len(o.SortBy) > 0 {
+		req.Param("includeObject", "Object")
+	}
+}
 
 // Run performs the get operation.
 // TODO: remove the need to pass these arguments, like other commands.
