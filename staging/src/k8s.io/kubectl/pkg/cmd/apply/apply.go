@@ -19,12 +19,8 @@ package apply
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
-
 	"github.com/spf13/cobra"
-	"sigs.k8s.io/structured-merge-diff/v4/fieldpath"
-
+	"io"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -43,6 +39,8 @@ import (
 	"k8s.io/component-base/version"
 	"k8s.io/klog/v2"
 	"k8s.io/kubectl/pkg/cmd/delete"
+	"k8s.io/kubectl/pkg/cmd/get"
+	"k8s.io/kubectl/pkg/cmd/registry"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/scheme"
 	"k8s.io/kubectl/pkg/util"
@@ -52,6 +50,11 @@ import (
 	"k8s.io/kubectl/pkg/util/slice"
 	"k8s.io/kubectl/pkg/util/templates"
 	"k8s.io/kubectl/pkg/validation"
+	"log"
+	"net/http"
+	"sigs.k8s.io/structured-merge-diff/v4/fieldpath"
+	"strings"
+	"time"
 )
 
 // ApplyFlags directly reflect the information that CLI is gathering via flags.  They will be converted to Options, which
@@ -193,9 +196,14 @@ func NewApplyFlags(streams genericiooptions.IOStreams) *ApplyFlags {
 	}
 }
 
+var getO *get.GetOptions
+var ff cmdutil.Factory
+
 // NewCmdApply creates the `apply` command
 func NewCmdApply(baseName string, f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobra.Command {
 	flags := NewApplyFlags(ioStreams)
+	getO = get.NewGetOptions("parent", ioStreams)
+	ff = f
 
 	cmd := &cobra.Command{
 		Use:                   "apply (-f FILENAME | -k DIRECTORY)",
@@ -212,7 +220,6 @@ func NewCmdApply(baseName string, f cmdutil.Factory, ioStreams genericiooptions.
 	}
 
 	flags.AddFlags(cmd)
-
 	// apply subcommands
 	cmd.AddCommand(NewCmdApplyViewLastApplied(f, flags.IOStreams))
 	cmd.AddCommand(NewCmdApplySetLastApplied(f, flags.IOStreams))
@@ -487,6 +494,7 @@ func (o *ApplyOptions) SetObjects(infos []*resource.Info) {
 
 // Run executes the `apply` command.
 func (o *ApplyOptions) Run() error {
+	t := time.Now()
 	if o.PreProcessorFn != nil {
 		klog.V(4).Infof("Running apply pre-processor function")
 		if err := o.PreProcessorFn(); err != nil {
@@ -516,12 +524,72 @@ func (o *ApplyOptions) Run() error {
 		}
 	}
 
+	reg := &registry.Registry{
+		Address:    "192.168.40.96:5000",
+		User:       "",
+		Password:   "",
+		Insecure:   false,
+		PullSecret: "",
+	}
+
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
-		if err := o.applyOneObject(info); err != nil {
+
+		//获取镜像
+		image, err := reg.GetImageV(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		//通过镜像获取版本和反向依赖
+		gVersion, deps, err := registry.GetVersionAndDependenceByUpdateRequest(image, reg)
+		//设置反向依赖的annotation
+		registry.SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		//获取所有的pod对象
+		g := ff.NewBuilder().Unstructured().
+			NamespaceParam(info.Namespace).
+			ContinueOnError().
+			Latest().
+			Flatten().
+			ResourceTypeOrNameArgs(true, "pod").
+			Do()
+		gInfos, err := g.Infos()
+
+		objs := map[string]*unstructured.Unstructured{}
+		bigObjMap := map[string]*unstructured.Unstructured{}
+		for _, i := range gInfos {
+			bigObjMap[i.Name] = i.Object.(*unstructured.Unstructured)
+		}
+		for _, i := range gInfos {
+			got := i.Object.(*unstructured.Unstructured)
+			owner, _, err := reg.GetResourceOwner(got, registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), ff)
+			if err != nil {
+				continue
+			}
+
+			ownerObj := owner
+			objs[owner.GetName()] = ownerObj
+
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+
+		//检测依赖
+		if err = reg.CheckForwardDependenceV(objs, deps); err != nil {
+			log.Printf("dependence check failed: %v\n", err)
+			errs = append(errs, err)
+		} else if err = reg.CheckReverseDependenceV(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
+			log.Printf("reverse dependence check failed: %v\n", err)
+			errs = append(errs, err)
+		} else if err := o.applyOneObject(info); err != nil {
 			errs = append(errs, err)
 		}
 	}
+	println(time.Since(t).String())
 	// If any errors occurred during apply, then return error (or
 	// aggregate of errors).
 	if len(errs) == 1 {
