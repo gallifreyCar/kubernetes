@@ -15,38 +15,6 @@ import (
 	"strings"
 )
 
-// GetVersionAndDependenceByUpdateRequest 获取版本和依赖约束
-func GetVersionAndDependenceByUpdateRequest(image string, reg *Registry) (string, map[string]string, error) {
-	var version string
-	deps := make(map[string]string)
-
-	dependence, err := reg.GetImageDependenceRaw(image)
-	if err != nil {
-		return "", nil, err
-	}
-	for k, v := range dependence {
-		if got, ok := deps[k]; ok {
-			// TODO: 重复的约束可以排重
-			deps[k] = got + "," + v
-		} else {
-			deps[k] = v
-		}
-	}
-
-	if version == "" {
-		i := strings.LastIndexByte(image, ':')
-		if i == -1 {
-			return "", nil, nil
-		}
-		v, err := semver.NewVersion(image[i+1:])
-		if err != nil {
-			return "", nil, nil
-		}
-		version = fmt.Sprintf("%d.%d.%d", v.Major(), v.Minor(), v.Patch())
-	}
-	return version, deps, nil
-}
-
 // 获取版本
 // 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像tag
 func (reg *Registry) getVersionByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
@@ -163,7 +131,7 @@ func GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, erro
 var errNoSupport = errors.New("不支持的资源类型")
 
 // GetVersionAndDependence 获取版本和依赖约束
-func (reg *Registry) GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured) (string, map[string]string, error) {
+func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured, reg *Registry) (string, map[string]string, error) {
 	switch krt {
 	case KRTDeployment, KRTStatefulSet, KRTDaemonSet:
 		podSpec, err := getObjPodTemplate(obj)
@@ -420,8 +388,9 @@ func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sRes
 }
 
 func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
+	krt := ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind)
 	//获取镜像
-	image, err := GetImage(ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
+	image, err := GetImage(krt, info.Object.(*unstructured.Unstructured))
 	if errors.Is(errNoSupport, err) {
 		return nil
 	}
@@ -431,7 +400,7 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	reg := &Registry{Address: image[:strings.Index(image, "/")]}
 
 	//通过镜像获取版本和反向依赖
-	gVersion, deps, err := GetVersionAndDependenceByUpdateRequest(image[strings.Index(image, "/")+1:], reg)
+	gVersion, deps, err := GetVersionAndDependence(krt, info.Object.(*unstructured.Unstructured), reg)
 	if err != nil {
 		return err
 	}
