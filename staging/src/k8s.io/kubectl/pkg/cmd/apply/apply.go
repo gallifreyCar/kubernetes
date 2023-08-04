@@ -39,7 +39,6 @@ import (
 	"k8s.io/component-base/version"
 	"k8s.io/klog/v2"
 	"k8s.io/kubectl/pkg/cmd/delete"
-	"k8s.io/kubectl/pkg/cmd/get"
 	"k8s.io/kubectl/pkg/cmd/registry"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/scheme"
@@ -50,10 +49,8 @@ import (
 	"k8s.io/kubectl/pkg/util/slice"
 	"k8s.io/kubectl/pkg/util/templates"
 	"k8s.io/kubectl/pkg/validation"
-	"log"
 	"net/http"
 	"sigs.k8s.io/structured-merge-diff/v4/fieldpath"
-	"strings"
 	"time"
 )
 
@@ -196,13 +193,11 @@ func NewApplyFlags(streams genericiooptions.IOStreams) *ApplyFlags {
 	}
 }
 
-var getO *get.GetOptions
 var ff cmdutil.Factory
 
 // NewCmdApply creates the `apply` command
 func NewCmdApply(baseName string, f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobra.Command {
 	flags := NewApplyFlags(ioStreams)
-	getO = get.NewGetOptions("parent", ioStreams)
 	ff = f
 
 	cmd := &cobra.Command{
@@ -526,58 +521,7 @@ func (o *ApplyOptions) Run() error {
 
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
-
-		//获取镜像
-		image, err := registry.GetImage(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
-		if err != nil {
-			return err
-		}
-		reg := &registry.Registry{Address: image[:strings.Index(image, "/")]}
-
-		//通过镜像获取版本和反向依赖
-		gVersion, deps, err := registry.GetVersionAndDependenceByUpdateRequest(image[strings.Index(image, "/")+1:], reg)
-		if err != nil {
-			errs = append(errs, err)
-		}
-		//设置反向依赖的annotation
-		registry.SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
-
-		//获取所有的pod对象
-		g := ff.NewBuilder().Unstructured().
-			NamespaceParam(info.Namespace).
-			ContinueOnError().
-			Latest().
-			Flatten().
-			ResourceTypeOrNameArgs(true, "pod").
-			Do()
-		gInfos, err := g.Infos()
-
-		objs := map[string]*unstructured.Unstructured{}
-		bigObjMap := map[string]*unstructured.Unstructured{}
-		for _, i := range gInfos {
-			bigObjMap[i.Name] = i.Object.(*unstructured.Unstructured)
-		}
-		for _, i := range gInfos {
-			got := i.Object.(*unstructured.Unstructured)
-			owner, _, err := reg.GetResourceOwner(got, registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), ff)
-			if err != nil {
-				continue
-			}
-
-			ownerObj := owner
-			objs[owner.GetName()] = ownerObj
-
-		}
-		if err != nil {
-			errs = append(errs, err)
-		}
-
-		//检测依赖
-		if err = reg.CheckForwardDependence(objs, deps); err != nil {
-			log.Printf("dependence check failed: %v\n", err)
-			errs = append(errs, err)
-		} else if err = reg.CheckReverseDependence(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
-			log.Printf("reverse dependence check failed: %v\n", err)
+		if err := registry.CheckDep(info, ff); err != nil {
 			errs = append(errs, err)
 		} else if err := o.applyOneObject(info); err != nil {
 			errs = append(errs, err)
