@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/cli-runtime/pkg/resource"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"log"
 	_ "net/http"
@@ -414,4 +415,64 @@ func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sRes
 	}
 
 	return reg.GetResourceOwner(sInfos[0].Object.(*unstructured.Unstructured), refKrt, ff)
+}
+
+func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
+	//获取镜像
+	image, err := GetImage(ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
+	if err != nil {
+		return err
+	}
+	reg := &Registry{Address: image[:strings.Index(image, "/")]}
+
+	//通过镜像获取版本和反向依赖
+	gVersion, deps, err := GetVersionAndDependenceByUpdateRequest(image[strings.Index(image, "/")+1:], reg)
+	if err != nil {
+		return err
+	}
+	//设置反向依赖的annotation
+	SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
+
+	//获取所有的pod对象
+	g := ff.NewBuilder().Unstructured().
+		NamespaceParam(info.Namespace).
+		ContinueOnError().
+		Latest().
+		Flatten().
+		ResourceTypeOrNameArgs(true, "pod").
+		Do()
+	gInfos, err := g.Infos()
+	if err != nil {
+		return err
+	}
+
+	objs := map[string]*unstructured.Unstructured{}
+	bigObjMap := map[string]*unstructured.Unstructured{}
+	for _, i := range gInfos {
+		bigObjMap[i.Name] = i.Object.(*unstructured.Unstructured)
+	}
+
+	for _, i := range gInfos {
+		got := i.Object.(*unstructured.Unstructured)
+		owner, _, err := reg.GetResourceOwner(got, ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), ff)
+		if err != nil {
+			continue
+		}
+
+		ownerObj := owner
+		objs[owner.GetName()] = ownerObj
+
+	}
+
+	//检测依赖
+	if err = reg.CheckForwardDependence(objs, deps); err != nil {
+		log.Printf("dependence check failed: %v\n", err)
+		return err
+	} else if err = reg.CheckReverseDependence(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
+		log.Printf("reverse dependence check failed: %v\n", err)
+
+		return err
+	}
+
+	return nil
 }
