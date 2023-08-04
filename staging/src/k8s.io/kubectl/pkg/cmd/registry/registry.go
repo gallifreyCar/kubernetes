@@ -7,6 +7,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -43,7 +44,12 @@ func (reg *Registry) getAuth() (authn.Authenticator, error) {
 		return authn.FromConfig(authn.AuthConfig{Username: reg.User, Password: reg.Password}), nil
 	}
 
-	if _, err := os.Stat(".docker/config.json"); err == nil {
+	homedir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	fullPath := path.Join(homedir, ".docker/config.json")
+	if _, err := os.Stat(fullPath); err == nil {
 		reg, err := name.NewRegistry(reg.Address)
 		if err != nil {
 			return nil, err
@@ -75,6 +81,7 @@ func (reg *Registry) GetImageDependenceRaw(image string) (map[string]string, err
 		return nil, err
 	}
 	auth, err := reg.getAuth()
+	auth = nil
 	if err != nil {
 		return nil, err
 	}
