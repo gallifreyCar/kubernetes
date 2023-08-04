@@ -536,7 +536,7 @@ func (o *ApplyOptions) Run() error {
 	for _, info := range infos {
 
 		//获取镜像
-		image, err := reg.GetImageV(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
+		image, err := reg.GetImage(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -579,10 +579,10 @@ func (o *ApplyOptions) Run() error {
 		}
 
 		//检测依赖
-		if err = reg.CheckForwardDependenceV(objs, deps); err != nil {
+		if err = reg.CheckForwardDependence(objs, deps); err != nil {
 			log.Printf("dependence check failed: %v\n", err)
 			errs = append(errs, err)
-		} else if err = reg.CheckReverseDependenceV(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
+		} else if err = reg.CheckReverseDependence(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
 			log.Printf("reverse dependence check failed: %v\n", err)
 			errs = append(errs, err)
 		} else if err := o.applyOneObject(info); err != nil {

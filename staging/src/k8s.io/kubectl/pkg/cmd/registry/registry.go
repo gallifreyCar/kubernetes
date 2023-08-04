@@ -102,63 +102,10 @@ func (reg *Registry) GetImageDependenceRaw(image string) (map[string]string, err
 	return results, nil
 }
 
-func (reg *Registry) GetImageDependenceRawV(image string) (map[string]string, error) {
-	ref, err := name.ParseReference(reg.Address+"/"+image, reg.getNameOptions()...)
-	if err != nil {
-		return nil, err
-	}
-	auth, err := reg.getAuth()
-	if err != nil {
-		return nil, err
-	}
-	desc, err := remote.Get(ref, remote.WithAuth(auth))
-	if err != nil {
-		return nil, err
-	}
-
-	images, err := desc.Image()
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := images.ConfigFile()
-	if err != nil {
-		return nil, err
-	}
-
-	results := make(map[string]string, len(cfg.Config.Labels))
-	for k, v := range cfg.Config.Labels {
-		if len(k) <= 4 || !strings.HasPrefix(k, "ver_") {
-			continue
-		}
-		results[k[4:]] = v
-	}
-	return results, nil
-}
-
-func (reg *Registry) GetImageDependence(ctx context.Context, image string) (map[string]*semver.Constraints, error) {
-	labels, err := reg.GetImageDependenceRaw(image)
-	if err != nil {
-		return nil, err
-	}
-	return ParseConstraints(ctx, labels)
-}
-
 func (reg *Registry) getNameOptions() []name.Option {
 	var opts []name.Option
 	if reg.Insecure {
 		opts = append(opts, name.Insecure)
 	}
 	return opts
-}
-
-func ParseConstraints(ctx context.Context, labels map[string]string) (map[string]*semver.Constraints, error) {
-	results := make(map[string]*semver.Constraints, len(labels))
-	for k, v := range labels {
-		c, err := semver.NewConstraint(v)
-		if err != nil {
-			continue
-		}
-		results[k] = c
-	}
-	return results, nil
 }
