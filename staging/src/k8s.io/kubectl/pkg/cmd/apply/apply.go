@@ -39,8 +39,8 @@ import (
 	"k8s.io/component-base/version"
 	"k8s.io/klog/v2"
 	"k8s.io/kubectl/pkg/cmd/delete"
-	"k8s.io/kubectl/pkg/cmd/registry"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/cmd/util/registry"
 	"k8s.io/kubectl/pkg/scheme"
 	"k8s.io/kubectl/pkg/util"
 	"k8s.io/kubectl/pkg/util/i18n"
@@ -523,7 +523,9 @@ func (o *ApplyOptions) Run() error {
 	for _, info := range infos {
 		if err := registry.CheckDep(info, ff); err != nil {
 			errs = append(errs, err)
-		} else if err := o.applyOneObject(info); err != nil {
+			continue
+		}
+		if err := o.applyOneObject(info); err != nil {
 			errs = append(errs, err)
 		}
 	}

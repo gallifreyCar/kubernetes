@@ -156,9 +156,11 @@ func GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, erro
 		}
 		return GetImageByPodTemplate(podSpec), nil
 	default:
-		return "", errors.New("不支持的资源类型")
+		return "", errNoSupport
 	}
 }
+
+var errNoSupport = errors.New("不支持的资源类型")
 
 // GetVersionAndDependence 获取版本和依赖约束
 func (reg *Registry) GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured) (string, map[string]string, error) {
@@ -420,7 +422,10 @@ func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sRes
 func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	//获取镜像
 	image, err := GetImage(ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
-	if err != nil {
+	if errors.Is(errNoSupport, err) {
+		return nil
+	}
+	if err != nil && !errors.Is(errNoSupport, err) {
 		return err
 	}
 	reg := &Registry{Address: image[:strings.Index(image, "/")]}

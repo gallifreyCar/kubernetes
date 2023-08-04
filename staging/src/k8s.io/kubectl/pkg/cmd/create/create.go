@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"k8s.io/kubectl/pkg/cmd/registry"
+	"k8s.io/kubectl/pkg/cmd/util/registry"
 	"net/url"
 	"runtime"
 	"strings"
