@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"k8s.io/kubectl/pkg/cmd/registry"
+	"log"
 	"net/url"
 	"runtime"
 	"strings"
@@ -98,10 +100,12 @@ func NewCreateOptions(ioStreams genericiooptions.IOStreams) *CreateOptions {
 	}
 }
 
+var ff cmdutil.Factory
+
 // NewCmdCreate returns new initialized instance of create sub command
 func NewCmdCreate(f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobra.Command {
 	o := NewCreateOptions(ioStreams)
-
+	ff = f
 	cmd := &cobra.Command{
 		Use:                   "create -f FILENAME",
 		DisableFlagsInUseLine: true,
@@ -265,9 +269,62 @@ func (o *CreateOptions) RunCreate(f cmdutil.Factory, cmd *cobra.Command) error {
 
 	count := 0
 	err = r.Visit(func(info *resource.Info, err error) error {
+
+		//获取镜像
+		image, err := registry.GetImage(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
 		if err != nil {
 			return err
 		}
+		reg := &registry.Registry{Address: image[:strings.Index(image, "/")], Insecure: true}
+
+		//通过镜像获取版本和反向依赖
+		gVersion, deps, err := registry.GetVersionAndDependenceByUpdateRequest(image[strings.Index(image, "/")+1:], reg)
+		if err != nil {
+			return err
+		}
+		//设置反向依赖的annotation
+		registry.SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
+
+		//获取所有的pod对象
+		g := ff.NewBuilder().Unstructured().
+			NamespaceParam(info.Namespace).
+			ContinueOnError().
+			Latest().
+			Flatten().
+			ResourceTypeOrNameArgs(true, "pod").
+			Do()
+		gInfos, err := g.Infos()
+
+		objs := map[string]*unstructured.Unstructured{}
+		bigObjMap := map[string]*unstructured.Unstructured{}
+		for _, i := range gInfos {
+			bigObjMap[i.Name] = i.Object.(*unstructured.Unstructured)
+		}
+		for _, i := range gInfos {
+			got := i.Object.(*unstructured.Unstructured)
+			owner, _, err := reg.GetResourceOwner(got, registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), ff)
+			if err != nil {
+				continue
+			}
+
+			ownerObj := owner
+			objs[owner.GetName()] = ownerObj
+
+		}
+		if err != nil {
+			return err
+		}
+
+		//检测依赖
+		if err = reg.CheckForwardDependence(objs, deps); err != nil {
+			log.Printf("dependence check failed: %v\n", err)
+			return err
+		}
+		if err = reg.CheckReverseDependence(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
+			log.Printf("reverse dependence check failed: %v\n", err)
+			return err
+		}
+
 		if err := util.CreateOrUpdateAnnotation(cmdutil.GetFlagBool(cmd, cmdutil.ApplyAnnotationsFlag), info.Object, scheme.DefaultJSONEncoder()); err != nil {
 			return cmdutil.AddSourceToErr("creating", info.Source, err)
 		}
@@ -427,6 +484,7 @@ func (o *CreateSubcommandOptions) Run() error {
 	if err := util.CreateOrUpdateAnnotation(o.CreateAnnotation, obj, scheme.DefaultJSONEncoder()); err != nil {
 		return err
 	}
+
 	if o.DryRunStrategy != cmdutil.DryRunClient {
 		// create subcommands have compiled knowledge of things they create, so type them directly
 		gvks, _, err := scheme.Scheme.ObjectKinds(obj)

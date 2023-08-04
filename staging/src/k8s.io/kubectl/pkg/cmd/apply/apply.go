@@ -535,12 +535,12 @@ func (o *ApplyOptions) Run() error {
 		reg := &registry.Registry{Address: image[:strings.Index(image, "/")]}
 
 		//通过镜像获取版本和反向依赖
-		gVersion, deps, err := registry.GetVersionAndDependenceByUpdateRequest(image, reg)
-		//设置反向依赖的annotation
-		registry.SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
+		gVersion, deps, err := registry.GetVersionAndDependenceByUpdateRequest(image[strings.Index(image, "/")+1:], reg)
 		if err != nil {
 			errs = append(errs, err)
 		}
+		//设置反向依赖的annotation
+		registry.SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
 
 		//获取所有的pod对象
 		g := ff.NewBuilder().Unstructured().
