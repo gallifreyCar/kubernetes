@@ -524,22 +524,16 @@ func (o *ApplyOptions) Run() error {
 		}
 	}
 
-	reg := &registry.Registry{
-		Address:    "192.168.40.96:5000",
-		User:       "",
-		Password:   "",
-		Insecure:   false,
-		PullSecret: "",
-	}
-
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
 
 		//获取镜像
-		image, err := reg.GetImage(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
+		image, err := registry.GetImage(registry.ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), info.Object.(*unstructured.Unstructured))
 		if err != nil {
-			errs = append(errs, err)
+			return err
 		}
+		reg := &registry.Registry{Address: image[:strings.Index(image, "/")]}
+
 		//通过镜像获取版本和反向依赖
 		gVersion, deps, err := registry.GetVersionAndDependenceByUpdateRequest(image, reg)
 		//设置反向依赖的annotation

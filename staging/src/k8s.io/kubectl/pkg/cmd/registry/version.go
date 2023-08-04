@@ -69,7 +69,7 @@ func (reg *Registry) getVersionByPodTemplate(podSpec *corev1.PodTemplateSpec) st
 
 // 获取版本
 // 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像
-func (reg *Registry) getImageByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
+func GetImageByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
 	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
 	containers = append(containers, podSpec.Spec.InitContainers...)
 	containers = append(containers, podSpec.Spec.Containers...)
@@ -77,8 +77,7 @@ func (reg *Registry) getImageByPodTemplate(podSpec *corev1.PodTemplateSpec) stri
 		if c.Image == "" {
 			continue
 		}
-		i := strings.Index(c.Image, "/")
-		return c.Image[i+1:]
+		return c.Image
 	}
 
 	return ""
@@ -142,7 +141,7 @@ func (reg *Registry) GetVersion(krt K8sResourceType, obj *unstructured.Unstructu
 
 // GetImage  GetVersion 获取版本
 // Deployment, StatefulSet, DaemonSet资源从spec.template中获取版本和依赖 getVersionByPodTemplate
-func (reg *Registry) GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
+func GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
 	version := obj.GetLabels()[K8sLabelVersion]
 	if version != "" {
 		return version, nil
@@ -154,7 +153,7 @@ func (reg *Registry) GetImage(krt K8sResourceType, obj *unstructured.Unstructure
 		if err != nil {
 			return "", err
 		}
-		return reg.getImageByPodTemplate(podSpec), nil
+		return GetImageByPodTemplate(podSpec), nil
 	default:
 		return "", errors.New("不支持的资源类型")
 	}
@@ -390,8 +389,6 @@ func SetObjVersion(obj *unstructured.Unstructured, version string, deps map[stri
 	obj.SetAnnotations(annotations)
 }
 
-var count = 0
-
 // GetResourceOwner 获取资源的owner
 func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sResourceType, ff cmdutil.Factory) (*unstructured.Unstructured, K8sResourceType, error) {
 	refs := obj.GetOwnerReferences()
@@ -403,8 +400,6 @@ func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sRes
 	if refKrt == KRTUnknown {
 		return nil, KRTUnknown, errors.New("unknown owner kind: " + refs[0].Kind)
 	}
-	count++
-	println("count:", count)
 	s := ff.NewBuilder().Unstructured().
 		NamespaceParam(obj.GetNamespace()).
 		ContinueOnError().
