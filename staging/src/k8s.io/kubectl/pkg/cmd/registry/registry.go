@@ -81,7 +81,6 @@ func (reg *Registry) GetImageDependenceRaw(image string) (map[string]string, err
 		return nil, err
 	}
 	auth, err := reg.getAuth()
-	auth = nil
 	if err != nil {
 		return nil, err
 	}
