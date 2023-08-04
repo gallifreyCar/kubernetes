@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/Masterminds/semver/v3"
@@ -15,45 +14,12 @@ import (
 	"strings"
 )
 
-// 获取版本和依赖约束
-func (reg *Registry) getVersionAndDependenceByUpdateRequest(req UpdateRequest) (string, map[string]string, error) {
-	var version string
-	deps := make(map[string]string)
-	for _, c := range req.Containers {
-		dependence, err := reg.GetImageDependenceRaw(c.GetImage())
-		if err != nil {
-			return "", nil, err
-		}
-		for k, v := range dependence {
-			if got, ok := deps[k]; ok {
-				// TODO: 重复的约束可以排重
-				deps[k] = got + "," + v
-			} else {
-				deps[k] = v
-			}
-		}
-
-		if version == "" {
-			i := strings.LastIndexByte(c.Image, ':')
-			if i == -1 {
-				continue
-			}
-			v, err := semver.NewVersion(c.Image[i+1:])
-			if err != nil {
-				continue
-			}
-			version = fmt.Sprintf("%d.%d.%d", v.Major(), v.Minor(), v.Patch())
-		}
-	}
-	return version, deps, nil
-}
-
 // GetVersionAndDependenceByUpdateRequest 获取版本和依赖约束
 func GetVersionAndDependenceByUpdateRequest(image string, reg *Registry) (string, map[string]string, error) {
 	var version string
 	deps := make(map[string]string)
 
-	dependence, err := reg.GetImageDependenceRawV(image)
+	dependence, err := reg.GetImageDependenceRaw(image)
 	if err != nil {
 		return "", nil, err
 	}
@@ -102,29 +68,8 @@ func (reg *Registry) getVersionByPodTemplate(podSpec *corev1.PodTemplateSpec) st
 }
 
 // 获取版本
-// 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像tag
-func (reg *Registry) getVersionByPodTemplateV(podSpec *corev1.PodTemplateSpec) string {
-	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
-	containers = append(containers, podSpec.Spec.InitContainers...)
-	containers = append(containers, podSpec.Spec.Containers...)
-	for _, c := range containers {
-		i := strings.LastIndexByte(c.Image, ':')
-		if i == -1 {
-			continue
-		}
-		v, err := semver.NewVersion(c.Image[i+1:])
-		if err != nil {
-			continue
-		}
-		return fmt.Sprintf("%d.%d.%d", v.Major(), v.Minor(), v.Patch())
-	}
-
-	return ""
-}
-
-// 获取版本
-// 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像tag
-func (reg *Registry) getVersionByPodTemplateVV(podSpec *corev1.PodTemplateSpec) string {
+// 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像
+func (reg *Registry) getImageByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
 	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
 	containers = append(containers, podSpec.Spec.InitContainers...)
 	containers = append(containers, podSpec.Spec.Containers...)
@@ -174,32 +119,10 @@ func (reg *Registry) getDependenceByPodTemplate(podSpec *corev1.PodTemplateSpec)
 
 	return deps, nil
 }
-func (reg *Registry) GetDependenceByPodTemplateV(podSpec *corev1.PodTemplateSpec) (map[string]string, error) {
-	deps := make(map[string]string)
 
-	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
-	containers = append(containers, podSpec.Spec.InitContainers...)
-	containers = append(containers, podSpec.Spec.Containers...)
-	for _, c := range containers {
-		dependence, err := reg.GetImageDependenceRawV(hideImageRegistry(c.Image))
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range dependence {
-			if got, ok := deps[k]; ok {
-				deps[k] = got + "," + v
-			} else {
-				deps[k] = v
-			}
-		}
-	}
-
-	return deps, nil
-}
-
-// 获取版本
+// GetVersion
 // Deployment, StatefulSet, DaemonSet资源从spec.template中获取版本和依赖 getVersionByPodTemplate
-func (reg *Registry) getVersion(ctx context.Context, krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
+func (reg *Registry) GetVersion(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
 	version := obj.GetLabels()[K8sLabelVersion]
 	if version != "" {
 		return version, nil
@@ -217,9 +140,9 @@ func (reg *Registry) getVersion(ctx context.Context, krt K8sResourceType, obj *u
 	}
 }
 
-// GetVersionV GetVersion 获取版本
+// GetImage  GetVersion 获取版本
 // Deployment, StatefulSet, DaemonSet资源从spec.template中获取版本和依赖 getVersionByPodTemplate
-func (reg *Registry) GetVersionV(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
+func (reg *Registry) GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
 	version := obj.GetLabels()[K8sLabelVersion]
 	if version != "" {
 		return version, nil
@@ -231,27 +154,7 @@ func (reg *Registry) GetVersionV(krt K8sResourceType, obj *unstructured.Unstruct
 		if err != nil {
 			return "", err
 		}
-		return reg.getVersionByPodTemplateV(podSpec), nil
-	default:
-		return "", errors.New("不支持的资源类型")
-	}
-}
-
-// GetImageV  GetVersion 获取版本
-// Deployment, StatefulSet, DaemonSet资源从spec.template中获取版本和依赖 getVersionByPodTemplate
-func (reg *Registry) GetImageV(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
-	version := obj.GetLabels()[K8sLabelVersion]
-	if version != "" {
-		return version, nil
-	}
-
-	switch krt {
-	case KRTDeployment, KRTStatefulSet, KRTDaemonSet:
-		podSpec, err := getObjPodTemplate(obj)
-		if err != nil {
-			return "", err
-		}
-		return reg.getVersionByPodTemplateVV(podSpec), nil
+		return reg.getImageByPodTemplate(podSpec), nil
 	default:
 		return "", errors.New("不支持的资源类型")
 	}
@@ -273,12 +176,7 @@ func (reg *Registry) GetVersionAndDependence(krt K8sResourceType, obj *unstructu
 	}
 }
 
-// 正向依赖检查
-// dep: 被检查的服务的版本依赖约束
-// 被依赖服务不存在时, 跳过检查, 而不是返回检查不通过
-//
-// 特殊情况1: 两个服务互相依赖时, 并且双方都不兼容对方老版本时, 会无法更新
-func (reg *Registry) checkForwardDependence(ctx context.Context, objs map[string]*unstructured.Unstructured, deps map[string]string) error {
+func (reg *Registry) CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map[string]string) error {
 	log.Printf("正向依赖检查: %v", deps)
 	for svc, constraint := range deps {
 		c, err := semver.NewConstraint(constraint)
@@ -292,41 +190,7 @@ func (reg *Registry) checkForwardDependence(ctx context.Context, objs map[string
 			continue
 		}
 
-		version, err := reg.getVersion(ctx, ParseResourceTypeFromObject(obj.Object), obj)
-		if err != nil {
-			return err
-		}
-		if version == "" {
-			log.Printf("被依赖的服务版本为空: %s", svc)
-			continue
-		}
-
-		v, err := semver.NewVersion(version)
-		if err != nil {
-			return err
-		}
-		if !c.Check(v) {
-			return err
-		}
-	}
-	return nil
-}
-
-func (reg *Registry) CheckForwardDependenceV(objs map[string]*unstructured.Unstructured, deps map[string]string) error {
-	log.Printf("正向依赖检查: %v", deps)
-	for svc, constraint := range deps {
-		c, err := semver.NewConstraint(constraint)
-		if err != nil {
-			return err
-		}
-
-		obj := objs[svc]
-		if obj == nil {
-			log.Printf("被依赖的服务不存在: %s", svc)
-			continue
-		}
-
-		version, err := reg.GetVersionV(ParseResourceTypeFromObject(obj.Object), obj)
+		version, err := reg.GetVersion(ParseResourceTypeFromObject(obj.Object), obj)
 		if err != nil {
 			return err
 		}
@@ -346,15 +210,7 @@ func (reg *Registry) CheckForwardDependenceV(objs map[string]*unstructured.Unstr
 	return nil
 }
 
-// 反向依赖检查
-// version: 被检查的服务待更新的版本号
-// svc: 待更新的服务版本名称
-//
-// 特殊情况1: 某个服务升级时, 依赖项从~1.1.0变到~1.2.0, 即不向下兼容老版本
-//
-//	此时正向依赖检查会失败, 需要升级依赖的服务至兼容的版本
-//	此时被依赖的服务进行反向依赖检查会失败, 因为新版本(1.2.x)不符合服务当前版本约束(~1.1.0)
-func (reg *Registry) checkReverseDependence(ctx context.Context, objs map[string]*unstructured.Unstructured, svc string, version string) error {
+func (reg *Registry) CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc string, version string) error {
 	log.Printf("反向依赖检查: %s %s", svc, version)
 	if version == "" {
 		return nil
@@ -384,92 +240,6 @@ func (reg *Registry) checkReverseDependence(ctx context.Context, objs map[string
 	}
 	return nil
 }
-
-func (reg *Registry) CheckReverseDependenceV(objs map[string]*unstructured.Unstructured, svc string, version string) error {
-	log.Printf("反向依赖检查: %s %s", svc, version)
-	if version == "" {
-		return nil
-	}
-
-	v, err := semver.NewVersion(version)
-	if err != nil {
-		return err
-	}
-
-	key := svc + K8sAnnotationDependence
-	for _, obj := range objs {
-		depRaw := obj.GetAnnotations()[key]
-		if depRaw == "" {
-			continue
-		}
-		deps := strings.Split(depRaw, ",")
-		for _, dep := range deps {
-			c, err := semver.NewConstraint(dep)
-			if err != nil {
-				return err
-			}
-			if !c.Check(v) {
-				return errors.New("反向依赖检查失败")
-			}
-		}
-	}
-	return nil
-}
-
-//func (s *Service) queryPodOwnerObjects(ctx context.Context, namespace string) (map[string]*unstructured.Unstructured, error) {
-//	pods, err := s.pod.Pods(namespace).List(labels.Everything())
-//	if err != nil {
-//		return nil, ErrQueryPods.Set(err)
-//	}
-//
-//	objs := make(map[string]*unstructured.Unstructured)
-//	for _, p := range pods {
-//		obj, err := s.getPodOwner(ctx, p)
-//		if err != nil {
-//			s.logger.Error("无法获取PodOwner的meta", zap.String("pod", p.Name), zap.Error(err), log.Context(ctx))
-//			continue
-//		}
-//		objs[obj.GetName()] = obj
-//	}
-//	return objs, nil
-//}
-
-//// 版本依赖检查
-//func (s *Service) checkDependence(ctx context.Context, namespace, name, version string, deps map[string]string) error {
-//	if s.cfg.DependencePolicy != dependencePolicyComplete {
-//		return nil
-//	}
-//
-//	objs, err := s.queryPodOwnerObjects(ctx, namespace)
-//	if err != nil {
-//		return err
-//	}
-//	if err := s.checkForwardDependence(ctx, objs, deps); err != nil {
-//		return err
-//	}
-//	if err := s.checkReverseDependence(ctx, objs, name, version); err != nil {
-//		return err
-//	}
-//	return nil
-//}
-
-//func setObjVersion(obj *unstructured.Unstructured, version string, deps map[string]string) {
-//	Labels := obj.GetLabels()
-//	if Labels == nil {
-//		Labels = map[string]string{}
-//	}
-//	Labels[pkg.K8sLabelVersion] = version
-//	obj.SetLabels(Labels)
-//
-//	annotations := obj.GetAnnotations()
-//	if annotations == nil {
-//		annotations = map[string]string{}
-//	}
-//	for k, v := range deps {
-//		annotations[k+pkg.K8sAnnotationDependence] = v
-//	}
-//	obj.SetAnnotations(annotations)
-//}
 
 func getObjPodTemplate(obj *unstructured.Unstructured) (*corev1.PodTemplateSpec, error) {
 	specRaw, ok, err := unstructured.NestedMap(obj.Object, "spec", "template")
@@ -594,29 +364,6 @@ var gvrMap = map[K8sResourceType]schema.GroupVersionResource{
 }
 
 func (k K8sResourceType) GVR() schema.GroupVersionResource { return gvrMap[k] }
-
-//var schemaMap = map[K8sResourceType]interface{}{
-//	KRTDeployment:          appsv1.Deployment{},
-//	KRTDaemonSet:           appsv1.DaemonSet{},
-//	KRTStatefulSet:         appsv1.StatefulSet{},
-//	KRTMonitorCrdKafka:     monitorv1alpha1.Kafka{},
-//	KRTMonitorCrdMysql:     monitorv1alpha1.Mysql{},
-//	KRTMonitorCrdRedis:     monitorv1alpha1.Redis{},
-//	KRTMonitorCrdZookeeper: monitorv1alpha1.Zookeeper{},
-//	KRTWellcloudCms:        wellcloudv1alpha1.Cms{},
-//	KRTClusterRole:         rbacv1.ClusterRole{},
-//	KRTClusterRoleBinding:  rbacv1.ClusterRoleBinding{},
-//	KRTServiceAccount:      corev1.ServiceAccount{},
-//	KRTService:             corev1.Service{},
-//	KRTConfigMap:           corev1.ConfigMap{},
-//	KRTPod:                 corev1.Pod{},
-//	KrtReplicaSet:          appsv1.ReplicaSet{},
-//	KRTMonitorCrdRabbitMQ:  monitorv1alpha1.RabbitMQ{},
-//	KRTJob:                 batchv1.Job{},
-//	KRTCronJob:             batchv1beta1.CronJob{},
-//}
-
-//func (k K8sResourceType) SchemaStruct() interface{} { return schemaMap[k] }
 
 const (
 	K8sLabelName            = "wkm.welljoint.com/name"        // 服务名称
