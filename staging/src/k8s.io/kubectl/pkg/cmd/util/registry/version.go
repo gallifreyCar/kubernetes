@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Masterminds/semver/v3"
+	"github.com/google/go-containerregistry/pkg/name"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,7 +18,7 @@ import (
 
 // 获取版本
 // 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像tag
-func (reg *Registry) getVersionByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
+func getVersionByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
 	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
 	containers = append(containers, podSpec.Spec.InitContainers...)
 	containers = append(containers, podSpec.Spec.Containers...)
@@ -36,7 +37,7 @@ func (reg *Registry) getVersionByPodTemplate(podSpec *corev1.PodTemplateSpec) st
 	return ""
 }
 
-// 获取版本
+// GetImageByPodTemplate 获取版本
 // 从init容器和普通容器中依次遍历, 找到第一个符合语义化版本的镜像
 func GetImageByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
 	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
@@ -65,14 +66,15 @@ func hideImageRegistry(image string) string {
 
 // 获取依赖约束
 // 从init容器和普通容器中依次遍历, 获取每个镜像的依赖约束
-func (reg *Registry) getDependenceByPodTemplate(podSpec *corev1.PodTemplateSpec) (map[string]string, error) {
+func getDependenceByPodTemplate(podSpec *corev1.PodTemplateSpec, reg *Registry, ref name.Reference) (map[string]string, error) {
 	deps := make(map[string]string)
 
 	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
 	containers = append(containers, podSpec.Spec.InitContainers...)
 	containers = append(containers, podSpec.Spec.Containers...)
 	for _, c := range containers {
-		dependence, err := reg.GetImageDependenceRaw(hideImageRegistry(c.Image))
+
+		dependence, err := reg.GetImageDependenceRaw(c.Image)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +92,7 @@ func (reg *Registry) getDependenceByPodTemplate(podSpec *corev1.PodTemplateSpec)
 
 // GetVersion
 // Deployment, StatefulSet, DaemonSet资源从spec.template中获取版本和依赖 getVersionByPodTemplate
-func (reg *Registry) GetVersion(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
+func GetVersion(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
 	version := obj.GetLabels()[K8sLabelVersion]
 	if version != "" {
 		return version, nil
@@ -102,7 +104,7 @@ func (reg *Registry) GetVersion(krt K8sResourceType, obj *unstructured.Unstructu
 		if err != nil {
 			return "", err
 		}
-		return reg.getVersionByPodTemplate(podSpec), nil
+		return getVersionByPodTemplate(podSpec), nil
 	default:
 		return "", errors.New("不支持的资源类型")
 	}
@@ -131,22 +133,22 @@ func GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, erro
 var errNoSupport = errors.New("不支持的资源类型")
 
 // GetVersionAndDependence 获取版本和依赖约束
-func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured, reg *Registry) (string, map[string]string, error) {
+func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured, reg *Registry, ref name.Reference) (string, map[string]string, error) {
 	switch krt {
 	case KRTDeployment, KRTStatefulSet, KRTDaemonSet:
 		podSpec, err := getObjPodTemplate(obj)
 		if err != nil {
 			return "", nil, err
 		}
-		version := reg.getVersionByPodTemplate(podSpec)
-		deps, err := reg.getDependenceByPodTemplate(podSpec)
+		version := getVersionByPodTemplate(podSpec)
+		deps, err := getDependenceByPodTemplate(podSpec, reg, ref)
 		return version, deps, err
 	default:
 		return "", nil, errors.New("不支持的资源类型")
 	}
 }
 
-func (reg *Registry) CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map[string]string) error {
+func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map[string]string) error {
 	log.Printf("正向依赖检查: %v", deps)
 	for svc, constraint := range deps {
 		c, err := semver.NewConstraint(constraint)
@@ -160,7 +162,7 @@ func (reg *Registry) CheckForwardDependence(objs map[string]*unstructured.Unstru
 			continue
 		}
 
-		version, err := reg.GetVersion(ParseResourceTypeFromObject(obj.Object), obj)
+		version, err := GetVersion(ParseResourceTypeFromObject(obj.Object), obj)
 		if err != nil {
 			return err
 		}
@@ -180,7 +182,7 @@ func (reg *Registry) CheckForwardDependence(objs map[string]*unstructured.Unstru
 	return nil
 }
 
-func (reg *Registry) CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc string, version string) error {
+func CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc string, version string) error {
 	log.Printf("反向依赖检查: %s %s", svc, version)
 	if version == "" {
 		return nil
@@ -361,7 +363,7 @@ func SetObjVersion(obj *unstructured.Unstructured, version string, deps map[stri
 }
 
 // GetResourceOwner 获取资源的owner
-func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sResourceType, ff cmdutil.Factory) (*unstructured.Unstructured, K8sResourceType, error) {
+func GetResourceOwner(obj *unstructured.Unstructured, krt K8sResourceType, ff cmdutil.Factory) (*unstructured.Unstructured, K8sResourceType, error) {
 	refs := obj.GetOwnerReferences()
 	if len(refs) == 0 {
 		return obj, krt, nil
@@ -384,7 +386,7 @@ func (reg *Registry) GetResourceOwner(obj *unstructured.Unstructured, krt K8sRes
 		return nil, KRTUnknown, err
 	}
 
-	return reg.GetResourceOwner(sInfos[0].Object.(*unstructured.Unstructured), refKrt, ff)
+	return GetResourceOwner(sInfos[0].Object.(*unstructured.Unstructured), refKrt, ff)
 }
 
 func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
@@ -399,8 +401,10 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	}
 	reg := &Registry{Address: image[:strings.Index(image, "/")]}
 
+	ref, _ := name.ParseReference(image)
+
 	//通过镜像获取版本和反向依赖
-	gVersion, deps, err := GetVersionAndDependence(krt, info.Object.(*unstructured.Unstructured), reg)
+	gVersion, deps, err := GetVersionAndDependence(krt, info.Object.(*unstructured.Unstructured), reg, ref)
 	if err != nil {
 		return err
 	}
@@ -428,7 +432,7 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 
 	for _, i := range gInfos {
 		got := i.Object.(*unstructured.Unstructured)
-		owner, _, err := reg.GetResourceOwner(got, ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind), ff)
+		owner, _, err := GetResourceOwner(got, krt, ff)
 		if err != nil {
 			continue
 		}
@@ -439,10 +443,10 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	}
 
 	//检测依赖
-	if err = reg.CheckForwardDependence(objs, deps); err != nil {
+	if err = CheckForwardDependence(objs, deps); err != nil {
 		log.Printf("dependence check failed: %v\n", err)
 		return err
-	} else if err = reg.CheckReverseDependence(objs, info.Name, image[strings.LastIndex(image, ":")+1:]); err != nil {
+	} else if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
 		log.Printf("reverse dependence check failed: %v\n", err)
 
 		return err

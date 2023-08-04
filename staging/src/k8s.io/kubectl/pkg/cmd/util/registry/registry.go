@@ -39,7 +39,7 @@ type Registry struct {
 	PullSecret string `json:"pull_secret"`
 }
 
-func (reg *Registry) getAuth() (authn.Authenticator, error) {
+func (reg *Registry) getAuth(ref name.Reference) (authn.Authenticator, error) {
 	if reg.User != "" && reg.Password != "" {
 		return authn.FromConfig(authn.AuthConfig{Username: reg.User, Password: reg.Password}), nil
 	}
@@ -50,37 +50,14 @@ func (reg *Registry) getAuth() (authn.Authenticator, error) {
 	}
 	fullPath := path.Join(homedir, ".docker/config.json")
 	if _, err := os.Stat(fullPath); err == nil {
-		reg, err := name.NewRegistry(reg.Address)
-		if err != nil {
-			return nil, err
-		}
-		return authn.DefaultKeychain.Resolve(reg)
+		return authn.DefaultKeychain.Resolve(ref.Context())
 	}
 	return nil, nil
 }
 
-func (reg *Registry) GetTags(ctx context.Context, service string) ([]string, error) {
-	repo, err := name.NewRepository(reg.Address+"/"+service, reg.getNameOptions()...)
-	if err != nil {
-		return nil, err
-	}
-	auth, err := reg.getAuth()
-	if err != nil {
-		return nil, err
-	}
-	got, err := remote.List(repo, remote.WithAuth(auth))
-	if err != nil {
-		return nil, err
-	}
-	return got, err
-}
-
 func (reg *Registry) GetImageDependenceRaw(image string) (map[string]string, error) {
-	ref, err := name.ParseReference(reg.Address+"/"+image, reg.getNameOptions()...)
-	if err != nil {
-		return nil, err
-	}
-	auth, err := reg.getAuth()
+	ref, err := name.ParseReference(image)
+	auth, err := reg.getAuth(ref)
 	if err != nil {
 		return nil, err
 	}
