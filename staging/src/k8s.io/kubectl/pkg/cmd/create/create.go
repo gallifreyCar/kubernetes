@@ -56,8 +56,8 @@ type CreateOptions struct {
 	DryRunStrategy cmdutil.DryRunStrategy
 
 	ValidationDirective string
-
-	fieldManager string
+	Factory             cmdutil.Factory
+	fieldManager        string
 
 	FilenameOptions  resource.FilenameOptions
 	Selector         string
@@ -88,23 +88,20 @@ var (
 )
 
 // NewCreateOptions returns an initialized CreateOptions instance
-func NewCreateOptions(ioStreams genericiooptions.IOStreams) *CreateOptions {
+func NewCreateOptions(f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *CreateOptions {
 	return &CreateOptions{
 		PrintFlags:  genericclioptions.NewPrintFlags("created").WithTypeSetter(scheme.Scheme),
 		RecordFlags: genericclioptions.NewRecordFlags(),
-
-		Recorder: genericclioptions.NoopRecorder{},
+		Factory:     f,
+		Recorder:    genericclioptions.NoopRecorder{},
 
 		IOStreams: ioStreams,
 	}
 }
 
-var ff cmdutil.Factory
-
 // NewCmdCreate returns new initialized instance of create sub command
 func NewCmdCreate(f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobra.Command {
-	o := NewCreateOptions(ioStreams)
-	ff = f
+	o := NewCreateOptions(f, ioStreams)
 	cmd := &cobra.Command{
 		Use:                   "create -f FILENAME",
 		DisableFlagsInUseLine: true,
@@ -269,7 +266,7 @@ func (o *CreateOptions) RunCreate(f cmdutil.Factory, cmd *cobra.Command) error {
 	count := 0
 	err = r.Visit(func(info *resource.Info, err error) error {
 
-		if err := registry.CheckDep(info, ff); err != nil {
+		if err := registry.CheckDep(info, o.Factory); err != nil {
 			return err
 		}
 
