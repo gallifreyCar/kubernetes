@@ -176,7 +176,7 @@ func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map
 			return err
 		}
 		if !c.Check(v) {
-			return errors.New("版本不符合约束")
+			return errors.New(fmt.Sprintf("正向依赖检查失败，%s版本(%s)不符合依赖约束(%s)", svc, version, constraint))
 		}
 	}
 	return nil
@@ -206,7 +206,7 @@ func CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc stri
 				return err
 			}
 			if !c.Check(v) {
-				return errors.New("反向依赖检查失败")
+				return errors.New(fmt.Sprintf("反向依赖检查失败，%s版本(%s)不符合%s的依赖约束(%s)", svc, version, obj.GetName(), dep))
 			}
 		}
 	}
@@ -444,10 +444,8 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 
 	//检测依赖
 	if err = CheckForwardDependence(objs, deps); err != nil {
-		log.Printf("dependence check failed: %v\n", err)
 		return err
 	} else if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
-		log.Printf("reverse dependence check failed: %v\n", err)
 
 		return err
 	}
