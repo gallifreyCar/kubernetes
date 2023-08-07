@@ -78,6 +78,7 @@ type ApplyFlags struct {
 	PruneAllowlist []string
 
 	genericiooptions.IOStreams
+	isCheckDeps bool
 }
 
 // ApplyOptions defines flags and other configuration parameters for the `apply` command
@@ -139,7 +140,8 @@ type ApplyOptions struct {
 
 	// ApplySet tracks the set of objects that have been applied, for the purposes of pruning.
 	// See git.k8s.io/enhancements/keps/sig-cli/3659-kubectl-apply-prune
-	ApplySet *ApplySet
+	ApplySet    *ApplySet
+	isCheckDeps bool
 }
 
 var (
@@ -190,6 +192,7 @@ func NewApplyFlags(streams genericiooptions.IOStreams) *ApplyFlags {
 
 		Overwrite:    true,
 		OpenAPIPatch: true,
+		isCheckDeps:  true,
 
 		IOStreams: streams,
 	}
@@ -239,6 +242,7 @@ func (flags *ApplyFlags) AddFlags(cmd *cobra.Command) {
 
 	cmd.Flags().BoolVar(&flags.Overwrite, "overwrite", flags.Overwrite, "Automatically resolve conflicts between the modified and live configuration by using values from the modified configuration")
 	cmd.Flags().BoolVar(&flags.OpenAPIPatch, "openapi-patch", flags.OpenAPIPatch, "If true, use openapi to calculate diff when the openapi presents and the resource can be found in the openapi spec. Otherwise, fall back to use baked-in types.")
+	cmd.Flags().BoolVar(&flags.isCheckDeps, "check-deps", flags.isCheckDeps, "If true, perform check of dependencies for the current namespace/scope of the apply. If any of the dependencies are not yet satisfied, the apply will return an error.")
 }
 
 // ToOptions converts from CLI inputs to runtime inputs
@@ -373,7 +377,8 @@ func (flags *ApplyFlags) ToOptions(f cmdutil.Factory, cmd *cobra.Command, baseNa
 		VisitedUids:       sets.New[types.UID](),
 		VisitedNamespaces: sets.New[string](),
 
-		ApplySet: applySet,
+		ApplySet:    applySet,
+		isCheckDeps: flags.isCheckDeps,
 	}
 
 	o.PostProcessorFn = o.PrintAndPrunePostProcessor()
@@ -521,9 +526,12 @@ func (o *ApplyOptions) Run() error {
 
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
-		if err := registry.CheckDep(info, o.Factory); err != nil {
-			errs = append(errs, err)
-			continue
+		if o.isCheckDeps {
+			err := registry.CheckDep(info, o.Factory)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
 		}
 		if err := o.applyOneObject(info); err != nil {
 			errs = append(errs, err)
