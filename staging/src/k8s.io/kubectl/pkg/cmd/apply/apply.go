@@ -242,7 +242,7 @@ func (flags *ApplyFlags) AddFlags(cmd *cobra.Command) {
 
 	cmd.Flags().BoolVar(&flags.Overwrite, "overwrite", flags.Overwrite, "Automatically resolve conflicts between the modified and live configuration by using values from the modified configuration")
 	cmd.Flags().BoolVar(&flags.OpenAPIPatch, "openapi-patch", flags.OpenAPIPatch, "If true, use openapi to calculate diff when the openapi presents and the resource can be found in the openapi spec. Otherwise, fall back to use baked-in types.")
-	cmd.Flags().BoolVar(&flags.isCheckDeps, "check-deps", flags.isCheckDeps, "If true, perform check of dependencies for the current namespace/scope of the apply. If any of the dependencies are not yet satisfied, the apply will return an error.")
+	cmd.Flags().BoolVar(&flags.isCheckDeps, "check-deps", flags.isCheckDeps, "设置是否进行版本依赖检测")
 }
 
 // ToOptions converts from CLI inputs to runtime inputs
