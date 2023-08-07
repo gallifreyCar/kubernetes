@@ -19,8 +19,12 @@ package apply
 import (
 	"context"
 	"fmt"
-	"github.com/spf13/cobra"
 	"io"
+	"net/http"
+
+	"github.com/spf13/cobra"
+	"sigs.k8s.io/structured-merge-diff/v4/fieldpath"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -49,9 +53,6 @@ import (
 	"k8s.io/kubectl/pkg/util/slice"
 	"k8s.io/kubectl/pkg/util/templates"
 	"k8s.io/kubectl/pkg/validation"
-	"net/http"
-	"sigs.k8s.io/structured-merge-diff/v4/fieldpath"
-	"time"
 )
 
 // ApplyFlags directly reflect the information that CLI is gathering via flags.  They will be converted to Options, which
@@ -213,6 +214,7 @@ func NewCmdApply(baseName string, f cmdutil.Factory, ioStreams genericiooptions.
 	}
 
 	flags.AddFlags(cmd)
+
 	// apply subcommands
 	cmd.AddCommand(NewCmdApplyViewLastApplied(f, flags.IOStreams))
 	cmd.AddCommand(NewCmdApplySetLastApplied(f, flags.IOStreams))
@@ -488,7 +490,6 @@ func (o *ApplyOptions) SetObjects(infos []*resource.Info) {
 
 // Run executes the `apply` command.
 func (o *ApplyOptions) Run() error {
-	t := time.Now()
 	if o.PreProcessorFn != nil {
 		klog.V(4).Infof("Running apply pre-processor function")
 		if err := o.PreProcessorFn(); err != nil {
@@ -528,7 +529,6 @@ func (o *ApplyOptions) Run() error {
 			errs = append(errs, err)
 		}
 	}
-	println(time.Since(t).String())
 	// If any errors occurred during apply, then return error (or
 	// aggregate of errors).
 	if len(errs) == 1 {
