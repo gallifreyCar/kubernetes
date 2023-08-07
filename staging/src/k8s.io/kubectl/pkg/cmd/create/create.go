@@ -121,7 +121,7 @@ func NewCmdCreate(f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobr
 			cmdutil.CheckErr(o.RunCreate(f, cmd))
 		},
 	}
-	cmd.Flags().BoolVar(&o.isCheckDeps, "check-deps", true, "check dependencies before creating the resource,")
+	cmd.Flags().BoolVar(&o.isCheckDeps, "check-deps", true, "设置是否进行版本依赖检测")
 	// bind flag structs
 	o.RecordFlags.AddFlags(cmd)
 
