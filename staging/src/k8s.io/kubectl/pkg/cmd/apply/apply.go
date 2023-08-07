@@ -102,6 +102,7 @@ type ApplyOptions struct {
 
 	ValidationDirective string
 	Validator           validation.Schema
+	Factory             cmdutil.Factory
 	Builder             *resource.Builder
 	Mapper              meta.RESTMapper
 	DynamicClient       dynamic.Interface
@@ -193,12 +194,9 @@ func NewApplyFlags(streams genericiooptions.IOStreams) *ApplyFlags {
 	}
 }
 
-var ff cmdutil.Factory
-
 // NewCmdApply creates the `apply` command
 func NewCmdApply(baseName string, f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobra.Command {
 	flags := NewApplyFlags(ioStreams)
-	ff = f
 
 	cmd := &cobra.Command{
 		Use:                   "apply (-f FILENAME | -k DIRECTORY)",
@@ -359,6 +357,7 @@ func (flags *ApplyFlags) ToOptions(f cmdutil.Factory, cmd *cobra.Command, baseNa
 		EnforceNamespace:    enforceNamespace,
 		Validator:           validator,
 		ValidationDirective: validationDirective,
+		Factory:             f,
 		Builder:             builder,
 		Mapper:              mapper,
 		DynamicClient:       dynamicClient,
@@ -521,7 +520,7 @@ func (o *ApplyOptions) Run() error {
 
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
-		if err := registry.CheckDep(info, ff); err != nil {
+		if err := registry.CheckDep(info, o.Factory); err != nil {
 			errs = append(errs, err)
 			continue
 		}
