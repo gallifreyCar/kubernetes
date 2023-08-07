@@ -68,6 +68,7 @@ type CreateOptions struct {
 	PrintObj func(obj kruntime.Object) error
 
 	genericiooptions.IOStreams
+	isCheckDeps bool
 }
 
 var (
@@ -120,7 +121,7 @@ func NewCmdCreate(f cmdutil.Factory, ioStreams genericiooptions.IOStreams) *cobr
 			cmdutil.CheckErr(o.RunCreate(f, cmd))
 		},
 	}
-
+	cmd.Flags().BoolVar(&o.isCheckDeps, "check-deps", true, "check dependencies before creating the resource,")
 	// bind flag structs
 	o.RecordFlags.AddFlags(cmd)
 
@@ -266,8 +267,11 @@ func (o *CreateOptions) RunCreate(f cmdutil.Factory, cmd *cobra.Command) error {
 	count := 0
 	err = r.Visit(func(info *resource.Info, err error) error {
 
-		if err := registry.CheckDep(info, o.Factory); err != nil {
-			return err
+		if o.isCheckDeps {
+			err := registry.CheckDep(info, o.Factory)
+			if err != nil {
+				return err
+			}
 		}
 
 		if err := util.CreateOrUpdateAnnotation(cmdutil.GetFlagBool(cmd, cmdutil.ApplyAnnotationsFlag), info.Object, scheme.DefaultJSONEncoder()); err != nil {
