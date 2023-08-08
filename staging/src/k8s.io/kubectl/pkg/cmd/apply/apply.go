@@ -18,11 +18,8 @@ package apply
 
 import (
 	"fmt"
-	"io"
-	"k8s.io/kubectl/pkg/cmd/util/registry"
-	"net/http"
-
 	"github.com/spf13/cobra"
+	"io"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -39,12 +36,14 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubectl/pkg/cmd/delete"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/cmd/util/registry"
 	"k8s.io/kubectl/pkg/scheme"
 	"k8s.io/kubectl/pkg/util"
 	"k8s.io/kubectl/pkg/util/i18n"
 	"k8s.io/kubectl/pkg/util/openapi"
 	"k8s.io/kubectl/pkg/util/templates"
 	"k8s.io/kubectl/pkg/validation"
+	"net/http"
 )
 
 // ApplyFlags directly reflect the information that CLI is gathering via flags.  They will be converted to Options, which
@@ -410,7 +409,6 @@ func (o *ApplyOptions) SetObjects(infos []*resource.Info) {
 
 // Run executes the `apply` command.
 func (o *ApplyOptions) Run() error {
-
 	if o.PreProcessorFn != nil {
 		klog.V(4).Infof("Running apply pre-processor function")
 		if err := o.PreProcessorFn(); err != nil {
@@ -436,7 +434,7 @@ func (o *ApplyOptions) Run() error {
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
 		if o.isCheckDeps {
-			err := registry.CheckDep(info, o.Factory)
+			err := registry.CheckDepSec(info, o.Factory)
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -446,6 +444,7 @@ func (o *ApplyOptions) Run() error {
 			errs = append(errs, err)
 		}
 	}
+
 	// If any errors occurred during apply, then return error (or
 	// aggregate of errors).
 	if len(errs) == 1 {

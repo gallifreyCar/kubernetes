@@ -285,10 +285,128 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	//检测依赖
 	if err = CheckForwardDependence(objs, deps); err != nil {
 		return err
+	} else if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func CheckDepSec(info *resource.Info, ff cmdutil.Factory) error {
+	krt := ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind)
+	if krt < KRTDeployment || krt > KRTDaemonSet {
+		return nil
+	}
+
+	//通过镜像获取版本和反向依赖
+	gVersion, deps, err := GetVersionAndDependence(krt, info.Object.(*unstructured.Unstructured))
+	if err != nil {
+		return err
+	}
+	//设置反向依赖的annotation
+	SetObjVersion(info.Object.(*unstructured.Unstructured), gVersion, deps)
+
+	g := ff.NewBuilder().Unstructured().
+		NamespaceParam(info.Namespace).
+		ContinueOnError().
+		Latest().
+		Flatten().
+		ResourceTypeOrNameArgs(true, "Pod").
+		Do()
+	gInfos, err := g.Infos()
+	if err != nil {
+		return err
+	}
+	var vInfos []*resource.Info
+	//查4次，分别查deployment、statefulset、daemonset、ReplicaSet
+	keys := []string{"Deployment", "StatefulSet", "ReplicaSet", "DaemonSet"}
+	for _, key := range keys {
+		g = ff.NewBuilder().Unstructured().
+			NamespaceParam(info.Namespace).
+			ContinueOnError().
+			Latest().
+			Flatten().
+			ResourceTypeOrNameArgs(true, key).
+			Do()
+		tInfos, err := g.Infos()
+		if err != nil {
+			return err
+		}
+		vInfos = append(vInfos, tInfos...)
+	}
+
+	g = ff.NewBuilder().Unstructured().
+		NamespaceParam(info.Namespace).
+		ContinueOnError().
+		Latest().
+		Flatten().
+		ResourceTypeOrNameArgs(true, "ReplicaSet").
+		Do()
+	tInfos, err := g.Infos()
+	if err != nil {
+		return err
+	}
+	vInfos = append(vInfos, tInfos...)
+
+	g = ff.NewBuilder().Unstructured().
+		NamespaceParam(info.Namespace).
+		ContinueOnError().
+		Latest().
+		Flatten().
+		ResourceTypeOrNameArgs(true, "DaemonSet").
+		Do()
+
+	tInfos, err = g.Infos()
+	if err != nil {
+		return err
+	}
+	vInfos = append(vInfos, tInfos...)
+
+	var vMap = make(map[string]*unstructured.Unstructured)
+	for _, v := range vInfos {
+		vMap[v.Name+v.Object.GetObjectKind().GroupVersionKind().Kind] = v.Object.(*unstructured.Unstructured)
+	}
+
+	objs := map[string]*unstructured.Unstructured{}
+	for _, i := range gInfos {
+		got := i.Object.(*unstructured.Unstructured)
+		owner, _, err := GetResourceOwnerSec(got, krt, vMap)
+		if err != nil {
+			continue
+		}
+
+		ownerObj := owner
+		objs[owner.GetName()] = ownerObj
+
+	}
+
+	//检测依赖
+	if err = CheckForwardDependence(objs, deps); err != nil {
+		return err
 	}
 	if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// GetResourceOwnerSec 获取资源的owner
+func GetResourceOwnerSec(obj *unstructured.Unstructured, krt K8sResourceType, vMap map[string]*unstructured.Unstructured) (*unstructured.Unstructured, K8sResourceType, error) {
+	refs := obj.GetOwnerReferences()
+	if len(refs) == 0 {
+		return obj, krt, nil
+	}
+
+	refKrt := ParseResourceType(refs[0].Kind)
+	if refKrt == KRTUnknown {
+		return nil, KRTUnknown, errors.New("unknown owner kind: " + refs[0].Kind)
+	}
+
+	next, ok := vMap[refs[0].Name+refs[0].Kind]
+	if !ok {
+		return nil, KRTUnknown, errors.New("unknown owner kind: " + refs[0].Kind)
+	}
+
+	return GetResourceOwnerSec(next, refKrt, vMap)
 }
