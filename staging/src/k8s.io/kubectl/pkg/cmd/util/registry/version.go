@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/cli-runtime/pkg/resource"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
-	"log"
 	_ "net/http"
 	"strings"
 )
@@ -118,7 +117,7 @@ func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured
 }
 
 func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map[string]string) error {
-	log.Printf("正向依赖检查: %v", deps)
+	fmt.Printf("正向依赖检查: %v\n", deps)
 	for svc, constraint := range deps {
 		c, err := semver.NewConstraint(constraint)
 		if err != nil {
@@ -127,7 +126,7 @@ func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map
 
 		obj := objs[svc]
 		if obj == nil {
-			log.Printf("被依赖的服务不存在: %s", svc)
+			fmt.Printf("被依赖的服务不存在: %s\n", svc)
 			continue
 		}
 
@@ -136,7 +135,7 @@ func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map
 			return err
 		}
 		if version == "" {
-			log.Printf("被依赖的服务版本为空: %s", svc)
+			fmt.Printf("被依赖的服务版本为空: %s\n", svc)
 			continue
 		}
 
@@ -145,14 +144,14 @@ func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map
 			return err
 		}
 		if !c.Check(v) {
-			return errors.New("版本不符合约束")
+			return errors.New(fmt.Sprintf("正向依赖检查失败，%s版本(%s)不符合依赖约束(%s)", svc, version, constraint))
 		}
 	}
 	return nil
 }
 
 func CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc string, version string) error {
-	log.Printf("反向依赖检查: %s %s", svc, version)
+	fmt.Printf("反向依赖检查: %s %s\n", svc, version)
 	if version == "" {
 		return nil
 	}
@@ -175,7 +174,7 @@ func CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc stri
 				return err
 			}
 			if !c.Check(v) {
-				return errors.New("反向依赖检查失败")
+				return errors.New(fmt.Sprintf("反向依赖检查失败，%s版本(%s)不符合%s的依赖约束(%s)", svc, version, obj.GetName(), dep))
 			}
 		}
 	}
@@ -285,11 +284,9 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 
 	//检测依赖
 	if err = CheckForwardDependence(objs, deps); err != nil {
-		log.Printf("dependence check failed: %v\n", err)
 		return err
-	} else if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
-		log.Printf("reverse dependence check failed: %v\n", err)
-
+	}
+	if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
 		return err
 	}
 
