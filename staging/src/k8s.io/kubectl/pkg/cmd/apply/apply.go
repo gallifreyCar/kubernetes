@@ -434,7 +434,7 @@ func (o *ApplyOptions) Run() error {
 	// Iterate through all objects, applying each one.
 	for _, info := range infos {
 		if o.isCheckDeps {
-			err := registry.CheckDepSec(info, o.Factory)
+			err := registry.CheckDep(info, o.Factory)
 			if err != nil {
 				errs = append(errs, err)
 				continue
