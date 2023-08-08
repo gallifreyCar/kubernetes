@@ -1,8 +1,6 @@
 package registry
 
 import (
-	"context"
-	"github.com/Masterminds/semver/v3"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -11,39 +9,7 @@ import (
 	"strings"
 )
 
-type Interface interface {
-	// GetTags 根据服务名称查询标签
-	// 比如镜像: harbor:5000/wecloud/wmc:1.5.1
-	// repo: wecloud/wmc
-	// tag: 1.5.1
-	GetTags(ctx context.Context, repo string) ([]string, error)
-	// GetImageDependenceRaw 获取镜像的依赖约束(未解析)
-	GetImageDependenceRaw(ctx context.Context, image string) (map[string]string, error)
-	// GetImageDependence 获取镜像的依赖约束
-	GetImageDependence(ctx context.Context, image string) (map[string]*semver.Constraints, error)
-
-	getVersionAndDependenceByUpdateRequest(ctx context.Context, req UpdateRequest) (string, map[string]string, error)
-}
-
-type Registry struct {
-	// 镜像仓库地址和端口
-	// 必须是可以访问到的地址或域名
-	Address string `json:"address"`
-	// 镜像仓库用户名
-	User string `json:"user"`
-	// 镜像仓库密码
-	Password string `json:"password"`
-	// 忽略不安全的HTTPS
-	Insecure bool `json:"insecure" default:"true"`
-	// 镜像拉取密钥
-	PullSecret string `json:"pull_secret"`
-}
-
-func (reg *Registry) getAuth(ref name.Reference) (authn.Authenticator, error) {
-	if reg.User != "" && reg.Password != "" {
-		return authn.FromConfig(authn.AuthConfig{Username: reg.User, Password: reg.Password}), nil
-	}
-
+func getAuth(ref name.Reference) (authn.Authenticator, error) {
 	homedir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -55,9 +21,12 @@ func (reg *Registry) getAuth(ref name.Reference) (authn.Authenticator, error) {
 	return nil, nil
 }
 
-func (reg *Registry) GetImageDependenceRaw(image string) (map[string]string, error) {
-	ref, err := name.ParseReference(image)
-	auth, err := reg.getAuth(ref)
+func GetImageDependenceRaw(image string) (map[string]string, error) {
+	ref, err := name.ParseReference(image, name.Insecure)
+	if err != nil {
+		return nil, err
+	}
+	auth, err := getAuth(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +52,4 @@ func (reg *Registry) GetImageDependenceRaw(image string) (map[string]string, err
 		results[k[4:]] = v
 	}
 	return results, nil
-}
-
-func (reg *Registry) getNameOptions() []name.Option {
-	var opts []name.Option
-	if reg.Insecure {
-		opts = append(opts, name.Insecure)
-	}
-	return opts
 }

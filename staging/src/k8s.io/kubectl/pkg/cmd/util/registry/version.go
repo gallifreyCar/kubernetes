@@ -4,11 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Masterminds/semver/v3"
-	"github.com/google/go-containerregistry/pkg/name"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/resource"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"log"
@@ -53,28 +51,21 @@ func GetImageByPodTemplate(podSpec *corev1.PodTemplateSpec) string {
 	return ""
 }
 
-// 隐藏镜像仓库地址
-// image: harbor:5000/wecloud/wmc:1.5.1
-// return: wecloud/wmc:1.5.1
-func hideImageRegistry(image string) string {
-	i := strings.IndexByte(image, '/')
-	if i == -1 {
-		return image
-	}
-	return image[i+1:]
-}
-
 // 获取依赖约束
 // 从init容器和普通容器中依次遍历, 获取每个镜像的依赖约束
-func getDependenceByPodTemplate(podSpec *corev1.PodTemplateSpec, reg *Registry, ref name.Reference) (map[string]string, error) {
+func getDependenceByPodTemplate(podSpec *corev1.PodTemplateSpec) (map[string]string, error) {
 	deps := make(map[string]string)
 
 	containers := make([]corev1.Container, 0, len(podSpec.Spec.InitContainers)+len(podSpec.Spec.Containers))
 	containers = append(containers, podSpec.Spec.InitContainers...)
 	containers = append(containers, podSpec.Spec.Containers...)
 	for _, c := range containers {
+		i := strings.LastIndexByte(c.Image, ':')
+		if i == -1 {
+			continue
+		}
 
-		dependence, err := reg.GetImageDependenceRaw(c.Image)
+		dependence, err := GetImageDependenceRaw(c.Image)
 		if err != nil {
 			return nil, err
 		}
@@ -110,30 +101,8 @@ func GetVersion(krt K8sResourceType, obj *unstructured.Unstructured) (string, er
 	}
 }
 
-// GetImage  GetVersion 获取版本
-// Deployment, StatefulSet, DaemonSet资源从spec.template中获取版本和依赖 getVersionByPodTemplate
-func GetImage(krt K8sResourceType, obj *unstructured.Unstructured) (string, error) {
-	version := obj.GetLabels()[K8sLabelVersion]
-	if version != "" {
-		return version, nil
-	}
-
-	switch krt {
-	case KRTDeployment, KRTStatefulSet, KRTDaemonSet:
-		podSpec, err := getObjPodTemplate(obj)
-		if err != nil {
-			return "", err
-		}
-		return GetImageByPodTemplate(podSpec), nil
-	default:
-		return "", errNoSupport
-	}
-}
-
-var errNoSupport = errors.New("不支持的资源类型")
-
 // GetVersionAndDependence 获取版本和依赖约束
-func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured, reg *Registry, ref name.Reference) (string, map[string]string, error) {
+func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured) (string, map[string]string, error) {
 	switch krt {
 	case KRTDeployment, KRTStatefulSet, KRTDaemonSet:
 		podSpec, err := getObjPodTemplate(obj)
@@ -141,7 +110,7 @@ func GetVersionAndDependence(krt K8sResourceType, obj *unstructured.Unstructured
 			return "", nil, err
 		}
 		version := getVersionByPodTemplate(podSpec)
-		deps, err := getDependenceByPodTemplate(podSpec, reg, ref)
+		deps, err := getDependenceByPodTemplate(podSpec)
 		return version, deps, err
 	default:
 		return "", nil, errors.New("不支持的资源类型")
@@ -176,7 +145,7 @@ func CheckForwardDependence(objs map[string]*unstructured.Unstructured, deps map
 			return err
 		}
 		if !c.Check(v) {
-			return errors.New(fmt.Sprintf("正向依赖检查失败，%s版本(%s)不符合依赖约束(%s)", svc, version, constraint))
+			return errors.New("版本不符合约束")
 		}
 	}
 	return nil
@@ -206,7 +175,7 @@ func CheckReverseDependence(objs map[string]*unstructured.Unstructured, svc stri
 				return err
 			}
 			if !c.Check(v) {
-				return errors.New(fmt.Sprintf("反向依赖检查失败，%s版本(%s)不符合%s的依赖约束(%s)", svc, version, obj.GetName(), dep))
+				return errors.New("反向依赖检查失败")
 			}
 		}
 	}
@@ -227,121 +196,6 @@ func getObjPodTemplate(obj *unstructured.Unstructured) (*corev1.PodTemplateSpec,
 	}
 	return &podSpec, nil
 }
-
-const (
-	KRTUnknown             K8sResourceType = iota // unknown
-	KRTDeployment                                 // Deployment
-	KRTStatefulSet                                // StatefulSet
-	KRTDaemonSet                                  // DaemonSet
-	KRTMonitorCrdKafka                            // MonitorKafka
-	KRTMonitorCrdMysql                            // MonitorMysql
-	KRTMonitorCrdRedis                            // MonitorRedis
-	KRTMonitorCrdZookeeper                        // MonitorZookeeper
-	KRTWellcloudCms                               // WellcloudCms
-	KRTClusterRole                                // ClusterRole
-	KRTClusterRoleBinding                         // ClusterRoleBinding
-	KRTServiceAccount                             // ServiceAccount
-	KRTService                                    // Service
-	KRTConfigMap                                  // ConfigMap
-	KRTPod                                        // Pod
-	KrtReplicaSet                                 // ReplicaSet
-	KRTMonitorCrdRabbitMQ                         // RabbitMQ
-	KRTJob                                        // Job
-	KRTCronJob                                    // CronJob
-)
-
-//go:generate stringer -type=K8sResourceType -linecomment
-type K8sResourceType int
-
-func ParseResourceType(kind string) K8sResourceType {
-	switch kind {
-	case "Deployment":
-		return KRTDeployment
-	case "StatefulSet":
-		return KRTStatefulSet
-	case "DaemonSet":
-		return KRTDaemonSet
-	case "Kafka":
-		return KRTMonitorCrdKafka
-	case "Mysql":
-		return KRTMonitorCrdMysql
-	case "Redis":
-		return KRTMonitorCrdRedis
-	case "Zookeeper":
-		return KRTMonitorCrdZookeeper
-	case "Cms":
-		return KRTWellcloudCms
-	case "ClusterRole":
-		return KRTClusterRole
-	case "ClusterRoleBinding":
-		return KRTClusterRoleBinding
-	case "ServiceAccount":
-		return KRTServiceAccount
-	case "Service":
-		return KRTService
-	case "ConfigMap":
-		return KRTConfigMap
-	case "Pod":
-		return KRTPod
-	case "ReplicaSet":
-		return KrtReplicaSet
-	case "RabbitMQ":
-		return KRTMonitorCrdRabbitMQ
-	case "Job":
-		return KRTJob
-	case "CronJob":
-		return KRTCronJob
-	default:
-		return KRTUnknown
-	}
-}
-
-func ParseResourceTypeFromObject(obj map[string]interface{}) K8sResourceType {
-	gotKind := obj["kind"]
-	kind, ok := gotKind.(string)
-	if !ok {
-		return KRTUnknown
-	}
-	return ParseResourceType(kind)
-}
-
-func (k K8sResourceType) IsCrd() bool {
-	return (k >= KRTMonitorCrdKafka && k <= KRTWellcloudCms) || k == KRTMonitorCrdRabbitMQ
-}
-
-func (k K8sResourceType) ShouldCheckVersion() bool {
-	return k == KRTDeployment || k == KRTDaemonSet || k == KRTStatefulSet
-}
-
-var gvrMap = map[K8sResourceType]schema.GroupVersionResource{
-	KRTDeployment:          {Group: "apps", Version: "v1", Resource: "deployments"},
-	KRTDaemonSet:           {Group: "apps", Version: "v1", Resource: "daemonsets"},
-	KRTStatefulSet:         {Group: "apps", Version: "v1", Resource: "statefulsets"},
-	KRTMonitorCrdKafka:     {Group: "monitor.welljoint.com", Version: "v1alpha1", Resource: "kafkas"},
-	KRTMonitorCrdMysql:     {Group: "monitor.welljoint.com", Version: "v1alpha1", Resource: "mysqls"},
-	KRTMonitorCrdRedis:     {Group: "monitor.welljoint.com", Version: "v1alpha1", Resource: "redis"},
-	KRTMonitorCrdZookeeper: {Group: "monitor.welljoint.com", Version: "v1alpha1", Resource: "zookeepers"},
-	KRTWellcloudCms:        {Group: "wellcloud.welljoint.com", Version: "v1alpha1", Resource: "cms"},
-	KRTClusterRole:         {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"},
-	KRTClusterRoleBinding:  {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
-	KRTServiceAccount:      {Group: "", Version: "v1", Resource: "serviceaccounts"},
-	KRTService:             {Group: "", Version: "v1", Resource: "services"},
-	KRTConfigMap:           {Group: "", Version: "v1", Resource: "configmaps"},
-	KRTPod:                 {Group: "", Version: "v1", Resource: "pods"},
-	KrtReplicaSet:          {Group: "apps", Version: "v1", Resource: "replicasets"},
-	KRTMonitorCrdRabbitMQ:  {Group: "monitor.welljoint.com", Version: "v1alpha1", Resource: "rabbitmqs"},
-	KRTJob:                 {Group: "batch", Version: "v1", Resource: "jobs"},
-	// TODO: http://172.16.200.215:8080/browse/WEL2X-2558
-	KRTCronJob: {Group: "batch", Version: "v1beta1", Resource: "cronjobs"},
-}
-
-func (k K8sResourceType) GVR() schema.GroupVersionResource { return gvrMap[k] }
-
-const (
-	K8sLabelName            = "wkm.welljoint.com/name"        // 服务名称
-	K8sLabelVersion         = "wkm.welljoint.com/version"     // 服务版本
-	K8sAnnotationDependence = ".wkm.welljoint.com/dependence" // 依赖约束
-)
 
 // SetObjVersion 设置对象的版本号
 func SetObjVersion(obj *unstructured.Unstructured, version string, deps map[string]string) {
@@ -391,20 +245,12 @@ func GetResourceOwner(obj *unstructured.Unstructured, krt K8sResourceType, ff cm
 
 func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	krt := ParseResourceType(info.Object.GetObjectKind().GroupVersionKind().Kind)
-	//获取镜像
-	image, err := GetImage(krt, info.Object.(*unstructured.Unstructured))
-	if errors.Is(errNoSupport, err) {
+	if krt < KRTDeployment || krt > KRTDaemonSet {
 		return nil
 	}
-	if err != nil && !errors.Is(errNoSupport, err) {
-		return err
-	}
-	reg := &Registry{Address: image[:strings.Index(image, "/")]}
-
-	ref, _ := name.ParseReference(image)
 
 	//通过镜像获取版本和反向依赖
-	gVersion, deps, err := GetVersionAndDependence(krt, info.Object.(*unstructured.Unstructured), reg, ref)
+	gVersion, deps, err := GetVersionAndDependence(krt, info.Object.(*unstructured.Unstructured))
 	if err != nil {
 		return err
 	}
@@ -425,11 +271,6 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 	}
 
 	objs := map[string]*unstructured.Unstructured{}
-	bigObjMap := map[string]*unstructured.Unstructured{}
-	for _, i := range gInfos {
-		bigObjMap[i.Name] = i.Object.(*unstructured.Unstructured)
-	}
-
 	for _, i := range gInfos {
 		got := i.Object.(*unstructured.Unstructured)
 		owner, _, err := GetResourceOwner(got, krt, ff)
@@ -444,8 +285,10 @@ func CheckDep(info *resource.Info, ff cmdutil.Factory) error {
 
 	//检测依赖
 	if err = CheckForwardDependence(objs, deps); err != nil {
+		log.Printf("dependence check failed: %v\n", err)
 		return err
 	} else if err = CheckReverseDependence(objs, info.Name, gVersion); err != nil {
+		log.Printf("reverse dependence check failed: %v\n", err)
 
 		return err
 	}
